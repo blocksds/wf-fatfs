@@ -1126,7 +1126,11 @@ static FRESULT move_window (	/* Returns FR_OK or FR_DISK_ERR */
 		res = sync_window(fs);		/* Flush the window */
 #endif
 		if (res == FR_OK) {			/* Fill sector window with new data */
+#if FF_WF_MARK_WINDOW_READS
+			if (disk_read(0x80 | fs->pdrv, fs->win, sect, 1) != RES_OK) {
+#else
 			if (disk_read(fs->pdrv, fs->win, sect, 1) != RES_OK) {
+#endif
 				sect = (LBA_t)0 - 1;	/* Invalidate window if read data is not valid */
 				res = FR_DISK_ERR;
 			}
@@ -1244,7 +1248,11 @@ static DWORD get_fat (		/* 0xFFFFFFFF:Disk error, 1:Internal error, 2..0x7FFFFFF
 		case FS_EXFAT :
 			if ((obj->objsize != 0 && obj->sclust != 0) || obj->stat == 0) {	/* Object except root dir must have valid data length */
 				DWORD cofs = clst - obj->sclust;	/* Offset from start cluster */
+#if FF_WF_CACHE_CLUSTER_SHIFT
+                                DWORD clen = (DWORD)((LBA_t)((obj->objsize - 1) / SS(fs)) >> fs->cshift);       /* Number of clusters - 1 */
+#else
 				DWORD clen = (DWORD)((LBA_t)((obj->objsize - 1) / SS(fs)) / fs->csize);	/* Number of clusters - 1 */
+#endif
 
 				if (obj->stat == 2 && cofs <= clen) {	/* Is it a contiguous chain? */
 					val = (cofs == clen) ? 0x7FFFFFFF : clst + 1;	/* No data on the FAT, generate the value */
@@ -1697,7 +1705,11 @@ static DWORD clmt_clust (	/* <2:Error, >=2:Cluster number */
 
 
 	tbl = fp->cltbl + 1;	/* Top of CLMT */
+#if FF_WF_CACHE_CLUSTER_SHIFT
+	cl = (DWORD)(ofs / SS(fs) >> fs->chift); /* Cluster order from top of the file */
+#else
 	cl = (DWORD)(ofs / SS(fs) / fs->csize);	/* Cluster order from top of the file */
+#endif
 	for (;;) {
 		ncl = *tbl++;			/* Number of cluters in the fragment */
 		if (ncl == 0) return 0;	/* End of table? (error) */
@@ -3529,7 +3541,12 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		fs->n_fats = fs->win[BPB_NumFATsEx];			/* Number of FATs */
 		if (fs->n_fats != 1) return FR_NO_FILESYSTEM;	/* (Supports only 1 FAT) */
 
+#if FF_WF_CACHE_CLUSTER_SHIFT
+		fs->cshift = fs->win[BPB_SecPerClusEx];			/* Cluster shift */
+		fs->csize = 1 << fs->cshift;				/* Cluster size */
+#else
 		fs->csize = 1 << fs->win[BPB_SecPerClusEx];		/* Cluster size */
+#endif
 		if (fs->csize == 0)	return FR_NO_FILESYSTEM;	/* (Must be 1..32768 sectors) */
 
 		nclst = ld_dword(fs->win + BPB_NumClusEx);		/* Number of clusters */
@@ -3582,6 +3599,9 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		fasize *= fs->n_fats;							/* Number of sectors for FAT area */
 
 		fs->csize = fs->win[BPB_SecPerClus];			/* Cluster size */
+#if FF_WF_CACHE_CLUSTER_SHIFT
+		fs->cshift = 31 - __builtin_clz(fs->csize);             /* Cluster shift */
+#endif
 		if (fs->csize == 0 || (fs->csize & (fs->csize - 1))) return FR_NO_FILESYSTEM;	/* (Must be power of 2) */
 
 		fs->n_rootdir = ld_word(fs->win + BPB_RootEntCnt);	/* Number of root directory entries */
@@ -3596,7 +3616,11 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		/* Determine the FAT sub type */
 		sysect = nrsv + fasize + fs->n_rootdir / (SS(fs) / SZDIRE);	/* RSV + FAT + DIR */
 		if (tsect < sysect) return FR_NO_FILESYSTEM;	/* (Invalid volume size) */
+#if FF_WF_CACHE_CLUSTER_SHIFT
+		nclst = (tsect - sysect) >> fs->cshift;			/* Number of clusters */
+#else
 		nclst = (tsect - sysect) / fs->csize;			/* Number of clusters */
+#endif
 		if (nclst == 0) return FR_NO_FILESYSTEM;		/* (Invalid volume size) */
 		fmt = 0;
 		if (nclst <= MAX_FAT32) fmt = FS_FAT32;
@@ -4823,6 +4847,10 @@ FRESULT f_readdir (
 			if (res == FR_NO_FILE) res = FR_OK;	/* Ignore end of directory */
 			if (res == FR_OK) {				/* A valid entry is found */
 				get_fileinfo(dp, fno);		/* Get the object information */
+#if FF_WF_FILINFO_LOCATION
+				fno->fpdrv = dp->obj.fs->pdrv;	/* Physical drive ID */
+				fno->fclust = ld_clust(dp->obj.fs, dp->dir);
+#endif
 				res = dir_next(dp, 0);		/* Increment index for next */
 				if (res == FR_NO_FILE) res = FR_OK;	/* Ignore end of directory now */
 			}
@@ -4907,8 +4935,25 @@ FRESULT f_stat (
 		INIT_NAMBUF(dj.obj.fs);
 		res = follow_path(&dj, path);	/* Follow the file path */
 		if (res == FR_OK) {				/* Follow completed */
+#if FF_WF_FILINFO_LOCATION
+			if (fno) {
+				fno->fpdrv = dj.obj.fs->pdrv;	/* Physical drive ID */
+				fno->fclust = ld_clust(dj.obj.fs, dj.dir); /* Cluster location */
+			}
+#endif
 			if (dj.fn[NSFLAG] & NS_NONAME) {	/* It is origin directory */
+#if FF_WF_STAT_ORIGIN_DIRECTORY
+				fno->fname[0] = 0;
+#ifdef FF_USE_LFN
+				fno->altname[0] = 0;
+#endif
+				fno->fsize = 0;
+				fno->fdate = 0;
+				fno->ftime = 0;
+				fno->fattrib = AM_DIR;
+#else
 				res = FR_INVALID_NAME;
+#endif
 			} else {							/* Found an object */
 				if (fno) get_fileinfo(&dj, fno);
 			}
@@ -4941,8 +4986,13 @@ FRESULT f_getfree (
 
 
 	/* Get logical drive */
+#ifdef FF_WF_GETFREE_NULL_PATH
+        if (path == NULL) fs = *fatfs;
+        if (path == NULL || (res = mount_volume(&path, &fs, 0)) == FR_OK) {
+#else
 	res = mount_volume(&path, &fs, 0);
 	if (res == FR_OK) {
+#endif
 		*fatfs = fs;				/* Return ptr to the fs object */
 		/* If free_clst is valid, return it without full FAT scan */
 		if (fs->free_clst <= fs->n_fatent - 2) {
