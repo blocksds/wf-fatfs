@@ -621,43 +621,59 @@ static const BYTE DbcTbl[] = MKCVTBL(TBL_DC, FF_CODE_PAGE);
 /* Load/Store multi-byte word in the FAT structure                       */
 /*-----------------------------------------------------------------------*/
 
-#if FF_WF_UNALIGNED_ACCESS >= 2
-static inline WORD ld_word (const BYTE* ptr)	/*	 Load a 2-byte little-endian word */
+#if FF_WF_UNALIGNED_ACCESS
+static inline WORD lda_word (const BYTE* ptr)	/*	 Load a 2-byte little-endian word */
 {
 	return *((const WORD*) ptr);
 }
 
-static inline DWORD ld_dword (const BYTE* ptr)	/* Load a 4-byte little-endian word */
+static inline DWORD lda_dword (const BYTE* ptr)	/* Load a 4-byte little-endian word */
 {
 	return *((const DWORD*) ptr);
 }
 
 #if FF_FS_EXFAT
-static inline QWORD ld_qword (const BYTE* ptr)	/* Load an 8-byte little-endian word */
+static inline QWORD lda_qword (const BYTE* ptr)	/* Load an 8-byte little-endian word */
 {
 	return *((const QWORD*) ptr);
 }
 #endif
 
 #if !FF_FS_READONLY
-static inline void st_word (BYTE* ptr, WORD val)	/* Store a 2-byte word in little-endian */
+static inline void sta_word (BYTE* ptr, WORD val)	/* Store a 2-byte word in little-endian */
 {
 	*((WORD*) ptr) = val;
 }
 
-static inline void st_dword (BYTE* ptr, DWORD val)	/* Store a 4-byte word in little-endian */
+static inline void sta_dword (BYTE* ptr, DWORD val)	/* Store a 4-byte word in little-endian */
 {
 	*((DWORD*) ptr) = val;
 }
 
 #if FF_FS_EXFAT
-static inline void st_qword (BYTE* ptr, QWORD val)	/* Store an 8-byte word in little-endian */
+static inline void sta_qword (BYTE* ptr, QWORD val)	/* Store an 8-byte word in little-endian */
 {
 	*((QWORD*) ptr) = val;
 }
 #endif
 #endif	/* !FF_FS_READONLY */
-#else /* FF_WF_UNALIGNED_ACCESS <= 1 */
+#else /* !FF_WF_UNALIGNED_ACCESS */
+#define lda_word ld_word
+#define lda_dword ld_dword
+#define lda_qword ld_qword
+#define sta_word st_word
+#define sta_dword st_dword
+#define sta_qword st_qword
+#endif
+
+#if FF_WF_UNALIGNED_ACCESS >= 2
+#define ld_word lda_word
+#define ld_dword lda_dword
+#define ld_qword lda_qword
+#define st_word sta_word
+#define st_dword sta_dword
+#define st_qword sta_qword
+#else
 static WORD ld_word (const BYTE* ptr)	/*	 Load a 2-byte little-endian word */
 {
 	WORD rv;
@@ -724,7 +740,7 @@ static void st_qword (BYTE* ptr, QWORD val)	/* Store an 8-byte word in little-en
 }
 #endif
 #endif	/* !FF_FS_READONLY */
-#endif /* FF_WF_UNALIGNED_ACCESS <= 1 */
+#endif
 
 
 /*-----------------------------------------------------------------------*/
@@ -1173,11 +1189,11 @@ static FRESULT sync_fs (	/* Returns FR_OK or FR_DISK_ERR */
 			if (fs->fs_type == FS_FAT32) {	/* FAT32: Update FSInfo sector */
 				/* Create FSInfo structure */
 				memset(fs->win, 0, sizeof fs->win);
-				st_dword(fs->win + FSI_LeadSig, 0x41615252);		/* Leading signature */
-				st_dword(fs->win + FSI_StrucSig, 0x61417272);		/* Structure signature */
-				st_dword(fs->win + FSI_Free_Count, fs->free_clst);	/* Number of free clusters */
-				st_dword(fs->win + FSI_Nxt_Free, fs->last_clst);	/* Last allocated culuster */
-				st_dword(fs->win + FSI_TrailSig, 0xAA550000);		/* Trailing signature */
+				sta_dword(fs->win + FSI_LeadSig, 0x41615252);		/* Leading signature */
+				sta_dword(fs->win + FSI_StrucSig, 0x61417272);		/* Structure signature */
+				sta_dword(fs->win + FSI_Free_Count, fs->free_clst);	/* Number of free clusters */
+				sta_dword(fs->win + FSI_Nxt_Free, fs->last_clst);	/* Last allocated culuster */
+				sta_dword(fs->win + FSI_TrailSig, 0xAA550000);		/* Trailing signature */
 				disk_write(fs->pdrv, fs->win, fs->winsect = fs->volbase + 1, 1);	/* Write it into the FSInfo sector (Next to VBR) */
 			}
 #if FF_FS_EXFAT
@@ -1253,20 +1269,12 @@ static DWORD get_fat (		/* 0xFFFFFFFF:Disk error, 1:Internal error, 2..0x7FFFFFF
 
 		case FS_FAT16 :
 			if (move_window(fs, fs->fatbase + (clst / (SS(fs) / 2))) != FR_OK) break;
-#if FF_WF_UNALIGNED_ACCESS == 1
-			val = *(uint16_t*)(fs->win + clst * 2 % SS(fs));	/* Always guaranteed to be aligned */
-#else
-			val = ld_word(fs->win + clst * 2 % SS(fs));		/* Simple WORD array */
-#endif
+			val = lda_word(fs->win + clst * 2 % SS(fs));		/* Simple WORD array */
 			break;
 
 		case FS_FAT32 :
 			if (move_window(fs, fs->fatbase + (clst / (SS(fs) / 4))) != FR_OK) break;
-#if FF_WF_UNALIGNED_ACCESS == 1
-			val = *(uint32_t*)(fs->win + clst * 4 % SS(fs)) & 0x0FFFFFFF;	/* Always guaranteed to be aligned */
-#else
-			val = ld_dword(fs->win + clst * 4 % SS(fs)) & 0x0FFFFFFF;	/* Simple DWORD array but mask out upper 4 bits */
-#endif
+			val = lda_dword(fs->win + clst * 4 % SS(fs)) & 0x0FFFFFFF;	/* Simple DWORD array but mask out upper 4 bits */
 			break;
 #if FF_FS_EXFAT
 		case FS_EXFAT :
@@ -1291,11 +1299,7 @@ static DWORD get_fat (		/* 0xFFFFFFFF:Disk error, 1:Internal error, 2..0x7FFFFFF
 						val = 0x7FFFFFFF;	/* Generate EOC */
 					} else {
 						if (move_window(fs, fs->fatbase + (clst / (SS(fs) / 4))) != FR_OK) break;
-#if FF_WF_UNALIGNED_ACCESS == 1
-						val = *(uint32_t*)(fs->win + clst * 4 % SS(fs)) & 0x7FFFFFFF;	/* Always guaranteed to be aligned */
-#else
-						val = ld_dword(fs->win + clst * 4 % SS(fs)) & 0x7FFFFFFF;
-#endif
+						val = lda_dword(fs->win + clst * 4 % SS(fs)) & 0x7FFFFFFF;
 					}
 					break;
 				}
@@ -1349,11 +1353,7 @@ static FRESULT put_fat (	/* FR_OK(0):succeeded, !=0:error */
 		case FS_FAT16:
 			res = move_window(fs, fs->fatbase + (clst / (SS(fs) / 2)));
 			if (res != FR_OK) break;
-#if FF_WF_UNALIGNED_ACCESS == 1
-			*(uint16_t*)(fs->win + clst * 2 % SS(fs)) = (WORD)val;	/* Always guaranteed to be aligned */
-#else
-			st_word(fs->win + clst * 2 % SS(fs), (WORD)val);	/* Simple WORD array */
-#endif
+			sta_word(fs->win + clst * 2 % SS(fs), (WORD)val);	/* Simple WORD array */
 			fs->wflag = 1;
 			break;
 
@@ -1363,17 +1363,10 @@ static FRESULT put_fat (	/* FR_OK(0):succeeded, !=0:error */
 #endif
 			res = move_window(fs, fs->fatbase + (clst / (SS(fs) / 4)));
 			if (res != FR_OK) break;
-#if FF_WF_UNALIGNED_ACCESS == 1
 			if (!FF_FS_EXFAT || fs->fs_type != FS_EXFAT) {
-				val = (val & 0x0FFFFFFF) | (*(uint32_t*)(fs->win + clst * 4 % SS(fs)) & 0xF0000000);
+				val = (val & 0x0FFFFFFF) | (lda_dword(fs->win + clst * 4 % SS(fs)) & 0xF0000000);
 			}
-			*(uint32_t*)(fs->win + clst * 4 % SS(fs)) = val;
-#else
-			if (!FF_FS_EXFAT || fs->fs_type != FS_EXFAT) {
-				val = (val & 0x0FFFFFFF) | (ld_dword(fs->win + clst * 4 % SS(fs)) & 0xF0000000);
-			}
-			st_dword(fs->win + clst * 4 % SS(fs), val);
-#endif
+			sta_dword(fs->win + clst * 4 % SS(fs), val);
 			fs->wflag = 1;
 			break;
 		}
@@ -3403,7 +3396,7 @@ static UINT check_fs (	/* 0:FAT/FAT32 VBR, 1:exFAT VBR, 2:Not FAT and valid BS, 
 
 	fs->wflag = 0; fs->winsect = (LBA_t)0 - 1;		/* Invaidate window */
 	if (move_window(fs, sect) != FR_OK) return 4;	/* Load the boot sector */
-	sign = ld_word(fs->win + BS_55AA);
+	sign = lda_word(fs->win + BS_55AA);
 #if FF_FS_EXFAT
 	if (sign == 0xAA55 && !memcmp(fs->win + BS_JmpBoot, "\xEB\x76\x90" "EXFAT   ", 11)) return 1;	/* It is an exFAT VBR */
 #endif
@@ -3417,11 +3410,11 @@ static UINT check_fs (	/* 0:FAT/FAT32 VBR, 1:exFAT VBR, 2:Not FAT and valid BS, 
 		b = fs->win[BPB_SecPerClus];
 		if ((w & (w - 1)) == 0 && w >= FF_MIN_SS && w <= FF_MAX_SS	/* Properness of sector size (512-4096 and 2^n) */
 			&& b != 0 && (b & (b - 1)) == 0				/* Properness of cluster size (2^n) */
-			&& ld_word(fs->win + BPB_RsvdSecCnt) != 0	/* Properness of number of reserved sectors (MNBZ) */
+			&& lda_word(fs->win + BPB_RsvdSecCnt) != 0	/* Properness of number of reserved sectors (MNBZ) */
 			&& (UINT)fs->win[BPB_NumFATs] - 1 <= 1		/* Properness of number of FATs (1 or 2) */
 			&& ld_word(fs->win + BPB_RootEntCnt) != 0	/* Properness of root dir size (MNBZ) */
 			&& (ld_word(fs->win + BPB_TotSec16) >= 128 || ld_dword(fs->win + BPB_TotSec32) >= 0x10000)	/* Properness of volume size (>=128) */
-			&& ld_word(fs->win + BPB_FATSz16) != 0) {	/* Properness of FAT size (MNBZ) */
+			&& lda_word(fs->win + BPB_FATSz16) != 0) {	/* Properness of FAT size (MNBZ) */
 				return 0;	/* It can be presumed an FAT VBR */
 		}
 	}
@@ -3557,7 +3550,7 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		for (i = BPB_ZeroedEx; i < BPB_ZeroedEx + 53 && fs->win[i] == 0; i++) ;	/* Check zero filler */
 		if (i < BPB_ZeroedEx + 53) return FR_NO_FILESYSTEM;
 
-		if (ld_word(fs->win + BPB_FSVerEx) != 0x100) return FR_NO_FILESYSTEM;	/* Check exFAT version (must be version 1.0) */
+		if (lda_word(fs->win + BPB_FSVerEx) != 0x100) return FR_NO_FILESYSTEM;	/* Check exFAT version (must be version 1.0) */
 
 		if (1 << fs->win[BPB_BytsPerSecEx] != SS(fs)) {	/* (BPB_BytsPerSecEx must be equal to the physical sector size) */
 			return FR_NO_FILESYSTEM;
@@ -3621,8 +3614,8 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 	{
 		if (ld_word(fs->win + BPB_BytsPerSec) != SS(fs)) return FR_NO_FILESYSTEM;	/* (BPB_BytsPerSec must be equal to the physical sector size) */
 
-		fasize = ld_word(fs->win + BPB_FATSz16);		/* Number of sectors per FAT */
-		if (fasize == 0) fasize = ld_dword(fs->win + BPB_FATSz32);
+		fasize = lda_word(fs->win + BPB_FATSz16);		/* Number of sectors per FAT */
+		if (fasize == 0) fasize = lda_dword(fs->win + BPB_FATSz32);
 		fs->fsize = fasize;
 
 		fs->n_fats = fs->win[BPB_NumFATs];				/* Number of FATs */
@@ -3639,9 +3632,9 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		if (fs->n_rootdir % (SS(fs) / SZDIRE)) return FR_NO_FILESYSTEM;	/* (Must be sector aligned) */
 
 		tsect = ld_word(fs->win + BPB_TotSec16);		/* Number of sectors on the volume */
-		if (tsect == 0) tsect = ld_dword(fs->win + BPB_TotSec32);
+		if (tsect == 0) tsect = lda_dword(fs->win + BPB_TotSec32);
 
-		nrsv = ld_word(fs->win + BPB_RsvdSecCnt);		/* Number of reserved sectors */
+		nrsv = lda_word(fs->win + BPB_RsvdSecCnt);		/* Number of reserved sectors */
 		if (nrsv == 0) return FR_NO_FILESYSTEM;			/* (Must not be 0) */
 
 		/* Determine the FAT sub type */
@@ -3665,9 +3658,9 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		fs->fatbase = bsect + nrsv; 					/* FAT start sector */
 		fs->database = bsect + sysect;					/* Data start sector */
 		if (fmt == FS_FAT32) {
-			if (ld_word(fs->win + BPB_FSVer32) != 0) return FR_NO_FILESYSTEM;	/* (Must be FAT32 revision 0.0) */
+			if (lda_word(fs->win + BPB_FSVer32) != 0) return FR_NO_FILESYSTEM;	/* (Must be FAT32 revision 0.0) */
 			if (fs->n_rootdir != 0) return FR_NO_FILESYSTEM;	/* (BPB_RootEntCnt must be 0) */
-			fs->dirbase = ld_dword(fs->win + BPB_RootClus32);	/* Root directory start cluster */
+			fs->dirbase = lda_dword(fs->win + BPB_RootClus32);	/* Root directory start cluster */
 			szbfat = fs->n_fatent * 4;					/* (Needed FAT size) */
 		} else {
 			if (fs->n_rootdir == 0)	return FR_NO_FILESYSTEM;	/* (BPB_RootEntCnt must not be 0) */
@@ -3682,19 +3675,19 @@ static FRESULT mount_volume (	/* FR_OK(0): successful, !=0: an error occurred */
 		fs->last_clst = fs->free_clst = 0xFFFFFFFF;		/* Invalidate cluster allocation information */
 		fs->fsi_flag = 0x80;	/* Disable FSInfo by default */
 		if (fmt == FS_FAT32
-			&& ld_word(fs->win + BPB_FSInfo32) == 1	/* FAT32: Enable FSInfo feature only if FSInfo sector is next to VBR */
+			&& lda_word(fs->win + BPB_FSInfo32) == 1	/* FAT32: Enable FSInfo feature only if FSInfo sector is next to VBR */
 			&& move_window(fs, bsect + 1) == FR_OK)
 		{
 			fs->fsi_flag = 0;
-			if (   ld_dword(fs->win + FSI_LeadSig) == 0x41615252	/* Load FSInfo data if available */
-				&& ld_dword(fs->win + FSI_StrucSig) == 0x61417272
-				&& ld_dword(fs->win + FSI_TrailSig) == 0xAA550000)
+			if (   lda_dword(fs->win + FSI_LeadSig) == 0x41615252	/* Load FSInfo data if available */
+				&& lda_dword(fs->win + FSI_StrucSig) == 0x61417272
+				&& lda_dword(fs->win + FSI_TrailSig) == 0xAA550000)
 			{
 #if (FF_FS_NOFSINFO & 1) == 0	/* Get free cluster count if trust it */
-				fs->free_clst = ld_dword(fs->win + FSI_Free_Count);
+				fs->free_clst = lda_dword(fs->win + FSI_Free_Count);
 #endif
 #if (FF_FS_NOFSINFO & 2) == 0	/* Get next free cluster if rtust it */
-				fs->last_clst = ld_dword(fs->win + FSI_Nxt_Free);
+				fs->last_clst = lda_dword(fs->win + FSI_Nxt_Free);
 #endif
 			}
 		}
@@ -5073,10 +5066,10 @@ FRESULT f_getfree (
 							if (res != FR_OK) break;
 						}
 						if (fs->fs_type == FS_FAT16) {
-							if (ld_word(fs->win + i) == 0) nfree++;	/* FAT16: Is this cluster free? */
+							if (lda_word(fs->win + i) == 0) nfree++;	/* FAT16: Is this cluster free? */
 							i += 2;	/* Next entry */
 						} else {
-							if ((ld_dword(fs->win + i) & 0x0FFFFFFF) == 0) nfree++;	/* FAT32: Is this cluster free? */
+							if ((lda_dword(fs->win + i) & 0x0FFFFFFF) == 0) nfree++;	/* FAT32: Is this cluster free? */
 							i += 4;	/* Next entry */
 						}
 						i %= SS(fs);
