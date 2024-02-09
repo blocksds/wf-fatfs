@@ -617,6 +617,49 @@ static const BYTE DbcTbl[] = MKCVTBL(TBL_DC, FF_CODE_PAGE);
 /* Load/Store multi-byte word in the FAT structure                       */
 /*-----------------------------------------------------------------------*/
 
+#if FF_WF_UNALIGNED_ACCESS >= 2
+__attribute__((always_inline))
+static inline WORD ld_word (const BYTE* ptr)	/*	 Load a 2-byte little-endian word */
+{
+	return *((const WORD*) ptr);
+}
+
+__attribute__((always_inline))
+static inline DWORD ld_dword (const BYTE* ptr)	/* Load a 4-byte little-endian word */
+{
+	return *((const DWORD*) ptr);
+}
+
+#if FF_FS_EXFAT
+__attribute__((always_inline))
+static inline QWORD ld_qword (const BYTE* ptr)	/* Load an 8-byte little-endian word */
+{
+	return *((const QWORD*) ptr);
+}
+#endif
+
+#if !FF_FS_READONLY
+__attribute__((always_inline))
+static inline void st_word (BYTE* ptr, WORD val)	/* Store a 2-byte word in little-endian */
+{
+	*((WORD*) ptr) = val;
+}
+
+__attribute__((always_inline))
+static inline void st_dword (BYTE* ptr, DWORD val)	/* Store a 4-byte word in little-endian */
+{
+	*((DWORD*) ptr) = val;
+}
+
+#if FF_FS_EXFAT
+__attribute__((always_inline))
+static inline void st_qword (BYTE* ptr, QWORD val)	/* Store an 8-byte word in little-endian */
+{
+	*((QWORD*) ptr) = val;
+}
+#endif
+#endif	/* !FF_FS_READONLY */
+#else /* FF_WF_UNALIGNED_ACCESS <= 1 */
 static WORD ld_word (const BYTE* ptr)	/*	 Load a 2-byte little-endian word */
 {
 	WORD rv;
@@ -683,7 +726,7 @@ static void st_qword (BYTE* ptr, QWORD val)	/* Store an 8-byte word in little-en
 }
 #endif
 #endif	/* !FF_FS_READONLY */
-
+#endif /* FF_WF_UNALIGNED_ACCESS <= 1 */
 
 
 /*-----------------------------------------------------------------------*/
@@ -1202,12 +1245,20 @@ static DWORD get_fat (		/* 0xFFFFFFFF:Disk error, 1:Internal error, 2..0x7FFFFFF
 
 		case FS_FAT16 :
 			if (move_window(fs, fs->fatbase + (clst / (SS(fs) / 2))) != FR_OK) break;
+#if FF_WF_UNALIGNED_ACCESS == 1
+			val = *(uint16_t*)(fs->win + clst * 2 % SS(fs));	/* Always guaranteed to be aligned */
+#else
 			val = ld_word(fs->win + clst * 2 % SS(fs));		/* Simple WORD array */
+#endif
 			break;
 
 		case FS_FAT32 :
 			if (move_window(fs, fs->fatbase + (clst / (SS(fs) / 4))) != FR_OK) break;
+#if FF_WF_UNALIGNED_ACCESS == 1
+			val = *(uint32_t*)(fs->win + clst * 4 % SS(fs)) & 0x0FFFFFFF;	/* Always guaranteed to be aligned */
+#else
 			val = ld_dword(fs->win + clst * 4 % SS(fs)) & 0x0FFFFFFF;	/* Simple DWORD array but mask out upper 4 bits */
+#endif
 			break;
 #if FF_FS_EXFAT
 		case FS_EXFAT :
@@ -1228,7 +1279,11 @@ static DWORD get_fat (		/* 0xFFFFFFFF:Disk error, 1:Internal error, 2..0x7FFFFFF
 						val = 0x7FFFFFFF;	/* Generate EOC */
 					} else {
 						if (move_window(fs, fs->fatbase + (clst / (SS(fs) / 4))) != FR_OK) break;
+#if FF_WF_UNALIGNED_ACCESS == 1
+						val = *(uint32_t*)(fs->win + clst * 4 % SS(fs)) & 0x7FFFFFFF;	/* Always guaranteed to be aligned */
+#else
 						val = ld_dword(fs->win + clst * 4 % SS(fs)) & 0x7FFFFFFF;
+#endif
 					}
 					break;
 				}
@@ -1282,7 +1337,11 @@ static FRESULT put_fat (	/* FR_OK(0):succeeded, !=0:error */
 		case FS_FAT16:
 			res = move_window(fs, fs->fatbase + (clst / (SS(fs) / 2)));
 			if (res != FR_OK) break;
+#if FF_WF_UNALIGNED_ACCESS == 1
+			*(uint16_t*)(fs->win + clst * 2 % SS(fs)) = (WORD)val;	/* Always guaranteed to be aligned */
+#else
 			st_word(fs->win + clst * 2 % SS(fs), (WORD)val);	/* Simple WORD array */
+#endif
 			fs->wflag = 1;
 			break;
 
@@ -1292,10 +1351,17 @@ static FRESULT put_fat (	/* FR_OK(0):succeeded, !=0:error */
 #endif
 			res = move_window(fs, fs->fatbase + (clst / (SS(fs) / 4)));
 			if (res != FR_OK) break;
+#if FF_WF_UNALIGNED_ACCESS == 1
+			if (!FF_FS_EXFAT || fs->fs_type != FS_EXFAT) {
+				val = (val & 0x0FFFFFFF) | (*(uint32_t*)(fs->win + clst * 4 % SS(fs)) & 0xF0000000);
+			}
+			*(uint32_t*)(fs->win + clst * 4 % SS(fs)) = val;
+#else
 			if (!FF_FS_EXFAT || fs->fs_type != FS_EXFAT) {
 				val = (val & 0x0FFFFFFF) | (ld_dword(fs->win + clst * 4 % SS(fs)) & 0xF0000000);
 			}
 			st_dword(fs->win + clst * 4 % SS(fs), val);
+#endif
 			fs->wflag = 1;
 			break;
 		}
@@ -2362,7 +2428,7 @@ static FRESULT dir_read (
 		{	/* On the FAT/FAT32 volume */
 			dp->obj.attr = attr = dp->dir[DIR_Attr] & AM_MASK;	/* Get attribute */
 #if FF_USE_LFN		/* LFN configuration */
-			if (b == DDEM || b == '.' || (int)((attr & ~AM_ARC) == AM_VOL) != vol) {	/* An entry without valid data */
+			if (b == DDEM || (!FF_WF_LIST_DOTDOT && b == '.') || (int)((attr & ~AM_ARC) == AM_VOL) != vol) {	/* An entry without valid data */
 				ord = 0xFF;
 			} else {
 				if (attr == AM_LFN) {	/* An LFN entry is found */
@@ -2381,7 +2447,7 @@ static FRESULT dir_read (
 				}
 			}
 #else		/* Non LFN configuration */
-			if (b != DDEM && b != '.' && attr != AM_LFN && (int)((attr & ~AM_ARC) == AM_VOL) == vol) {	/* Is it a valid entry? */
+			if (b != DDEM && (FF_WF_LIST_DOTDOT || b != '.') && attr != AM_LFN && (int)((attr & ~AM_ARC) == AM_VOL) == vol) {	/* Is it a valid entry? */
 				break;
 			}
 #endif
