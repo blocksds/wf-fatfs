@@ -1945,9 +1945,9 @@ static DWORD ld_clust (	/* Returns the top cluster value of the SFN entry */
 {
 	DWORD cl;
 
-	cl = ld_word(dir + DIR_FstClusLO);
+	cl = lda_word(dir + DIR_FstClusLO);
 	if (fs->fs_type == FS_FAT32) {
-		cl |= (DWORD)ld_word(dir + DIR_FstClusHI) << 16;
+		cl |= (DWORD)lda_word(dir + DIR_FstClusHI) << 16;
 	}
 
 	return cl;
@@ -1961,9 +1961,9 @@ static void st_clust (
 	DWORD cl	/* Value to be set */
 )
 {
-	st_word(dir + DIR_FstClusLO, (WORD)cl);
+	sta_word(dir + DIR_FstClusLO, (WORD)cl);
 	if (fs->fs_type == FS_FAT32) {
-		st_word(dir + DIR_FstClusHI, (WORD)(cl >> 16));
+		sta_word(dir + DIR_FstClusHI, (WORD)(cl >> 16));
 	}
 }
 #endif
@@ -1984,7 +1984,7 @@ static int cmp_lfn (		/* 1:matched, 0:not matched */
 	WCHAR pchr, chr;
 
 
-	if (ld_word(dir + LDIR_FstClusLO) != 0) return 0;	/* Check if LDIR_FstClusLO is 0 */
+	if (lda_word(dir + LDIR_FstClusLO) != 0) return 0;	/* Check if LDIR_FstClusLO is 0 */
 
 	ni = (UINT)((dir[LDIR_Ord] & 0x3F) - 1) * 13;	/* Offset in the name to be compared */
 
@@ -2020,7 +2020,7 @@ static int pick_lfn (	/* 1:succeeded, 0:buffer overflow or invalid LFN entry */
 	WCHAR pchr, chr;
 
 
-	if (ld_word(dir + LDIR_FstClusLO) != 0) return 0;	/* Check if LDIR_FstClusLO is 0 */
+	if (lda_word(dir + LDIR_FstClusLO) != 0) return 0;	/* Check if LDIR_FstClusLO is 0 */
 
 	ni = (UINT)((dir[LDIR_Ord] & ~LLEF) - 1) * 13;	/* Offset in the name buffer */
 
@@ -2063,7 +2063,7 @@ static void put_lfn (
 	dir[LDIR_Chksum] = sum;			/* Set checksum */
 	dir[LDIR_Attr] = AM_LFN;		/* Set attribute */
 	dir[LDIR_Type] = 0;
-	st_word(dir + LDIR_FstClusLO, 0);
+	sta_word(dir + LDIR_FstClusLO, 0);
 
 	ni = (UINT)(ord - 1) * 13;		/* Offset in the name */
 	di = chr = 0;
@@ -2839,9 +2839,9 @@ static void get_fileinfo (
 #endif
 
 	fno->fattrib = dp->dir[DIR_Attr] & AM_MASK;			/* Attribute */
-	fno->fsize = ld_dword(dp->dir + DIR_FileSize);		/* Size */
-	fno->ftime = ld_word(dp->dir + DIR_ModTime + 0);	/* Time */
-	fno->fdate = ld_word(dp->dir + DIR_ModTime + 2);	/* Date */
+	fno->fsize = lda_dword(dp->dir + DIR_FileSize);		/* Size */
+	fno->ftime = lda_word(dp->dir + DIR_ModTime + 0);	/* Time */
+	fno->fdate = lda_word(dp->dir + DIR_ModTime + 2);	/* Date */
 }
 
 #endif /* FF_FS_MINIMIZE <= 1 || FF_FS_RPATH >= 2 */
@@ -3905,7 +3905,7 @@ FRESULT f_open (
 					cl = ld_clust(fs, dj.dir);			/* Get current cluster chain */
 					dj.dir[DIR_Attr] = AM_ARC;			/* Reset attribute */
 					st_clust(fs, dj.dir, 0);			/* Reset file allocation info */
-					st_dword(dj.dir + DIR_FileSize, 0);
+					sta_dword(dj.dir + DIR_FileSize, 0);
 					fs->wflag = 1;
 					if (cl != 0) {						/* Remove the cluster chain if exist */
 						sc = fs->winsect;
@@ -3961,7 +3961,7 @@ FRESULT f_open (
 #endif
 			{
 				fp->obj.sclust = ld_clust(fs, dj.dir);					/* Get object allocation info */
-				fp->obj.objsize = ld_dword(dj.dir + DIR_FileSize);
+				fp->obj.objsize = lda_dword(dj.dir + DIR_FileSize);
 			}
 #if FF_USE_FASTSEEK
 			fp->cltbl = 0;		/* Disable fast seek mode */
@@ -4349,9 +4349,9 @@ FRESULT f_sync (
 					dir = fp->dir_ptr;
 					dir[DIR_Attr] |= AM_ARC;						/* Set archive attribute to indicate that the file has been changed */
 					st_clust(fp->obj.fs, dir, fp->obj.sclust);		/* Update file allocation information  */
-					st_dword(dir + DIR_FileSize, (DWORD)fp->obj.objsize);	/* Update file size */
+					sta_dword(dir + DIR_FileSize, (DWORD)fp->obj.objsize);	/* Update file size */
 					st_dword(dir + DIR_ModTime, tm);				/* Update modified time */
-					st_word(dir + DIR_LstAccDate, 0);
+					sta_word(dir + DIR_LstAccDate, 0);
 					fs->wflag = 1;
 					res = sync_fs(fs);					/* Restore it to the directory */
 					fp->flag &= (BYTE)~FA_MODIFIED;
